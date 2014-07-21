@@ -4,21 +4,18 @@ var net = require('net');
 var EventEmitter = require('events').EventEmitter;
 
 test('destroy the socket during piping', function (t) {
-    t.plan(2);
-    
-    var p0 = Math.floor(Math.random() * (Math.pow(2,16) - 1e4) + 1e4);
-    var p1 = Math.floor(Math.random() * (Math.pow(2,16) - 1e4) + 1e4);
+    t.plan(3);
     
     var s0 = bouncy(function (req, bounce) {
         t.equal(req.headers.host, 'lulzy');
         
-        var c = net.connect(p1, function () {
+        var c = net.connect(s1.address().port, function () {
             bounce(c);
         });
     });
     
-    s0.listen(p0, function () {
-        var c = net.connect(p0, function () {
+    s0.listen(function () {
+        var c = net.connect(s0.address().port, function () {
             c.write('POST /lul HTTP/1.1\r\n');
             c.write('Host: lulzy\r\n');
             c.write('Foo: bar\r\n');
@@ -26,25 +23,16 @@ test('destroy the socket during piping', function (t) {
             c.write('\r\n');
             
             setTimeout(function () {
-                function onerror (err) {
-                    t.equal(
-                        err.message, 'This socket is closed.',
-                        'write to closed socket emits an error'
-                    );
-                }
-                
-                c.once('error', onerror); // node 0.8 emits an error
-                try {
-                    c.write('a=3&b=4');
-                }
-                catch (err) {
-                    onerror(err); // node 0.6 throws
-                }
-            }, 50);
-        });
-        
-        t.on('end', function () {
-            c.end();
+                c.once('error', function (err) {
+                    t.ok(/socket is closed/.test(err.message));
+                });
+                c.write('a=3&b=4');
+            }, 300);
+            
+            setTimeout(function () {
+                t.pass();
+                c.end();
+            }, 350);
         });
     });
     
@@ -53,7 +41,7 @@ test('destroy the socket during piping', function (t) {
             c.destroy();
         }, 20);
     });
-    s1.listen(p1);
+    s1.listen(0);
     
     t.on('end', function () {
         s0.close();

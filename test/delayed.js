@@ -3,28 +3,21 @@ var http = require('http');
 var net = require('net');
 var bouncy = require('../');
 
-test('check for x-forwarded default headers', function (t) {
-    t.plan(6);
-    
+test('bounce', function (t) {
     var s0 = http.createServer(function (req, res) {
         res.setHeader('content-type', 'text/plain');
-        res.write('beep boop');
-        t.equal(req.headers['x-forwarded-for'], '127.0.0.1');
-        t.equal(req.headers['x-forwarded-port'], s1.address().port.toString());
-        t.equal(req.headers['x-forwarded-proto'], 'http');
-        res.end();
+        res.write('beep ');
+        setTimeout(function () {
+            res.write('boop');
+            res.end();
+        }, 100);
     });
     s0.listen(connect);
     
     var s1 = bouncy(function (req, bounce) {
-        bounce({
-            port: s0.address().port,
-            headers: {
-                'x-forwarded-for': '127.0.0.1',
-                'x-forwarded-port': s1.address().port.toString(),
-                'x-forwarded-proto': 'http'
-            }
-        });
+        setTimeout(function () {
+            bounce(net.connect(s0.address().port));
+        }, 100);
     });
     s1.listen(connect);
     
@@ -35,7 +28,7 @@ test('check for x-forwarded default headers', function (t) {
             method : 'GET',
             host : 'localhost',
             port : s1.address().port,
-            path : '/',
+            path : '/beep',
             headers : { connection : 'close' }
         };
         var req = http.request(opts, function (res) {

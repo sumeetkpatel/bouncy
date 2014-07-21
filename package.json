@@ -1,7 +1,7 @@
 {
     "name" : "bouncy",
-    "description" : "Bounce HTTP requests around for a load balancer or http host router completely transparently",
-    "version" : "1.3.1",
+    "description" : "route incoming http requests to http servers",
+    "version" : "3.2.1",
     "repository" : {
         "type" : "git",
         "url" : "git://github.com/substack/bouncy.git"
@@ -12,36 +12,25 @@
     },
     "keywords" : [
         "http",
-        "parse",
-        "bounce",
-        "load",
-        "balancer",
-        "host",
-        "route",
+        "proxy",
         "router",
-        "transparent"
+        "load",
+        "balancer"
     ],
-    "directories" : {
-        "lib" : ".",
-        "example" : "example",
-        "test" : "test"
-    },
     "scripts" : {
         "test" : "tap test/*.js"
     },
     "dependencies" : {
-        "parsley" : "0.1.x",
-        "morestreams" : "0.0.2"
+        "through": "~2.3.4",
+        "optimist": "~0.3.5"
     },
     "devDependencies" : {
-        "tap" : "~0.2.5",
-        "lazy" : "1.0.x",
-        "websocket-server" : "1.4.x",
-        "wsclient" : "0.2.x",
-        "chunky" : "0.0.x"
-    },
-    "engines" : {
-        "node" : ">=0.4.0"
+        "tap" : "~0.4.0",
+        "websocket-server" : "~1.4.04",
+        "wsclient" : "~0.2.0",
+        "chunky" : "~0.0.0",
+        "concat-stream": "~1.0.0",
+        "split": "~0.2.5"
     },
     "license" : "MIT",
     "author" : {

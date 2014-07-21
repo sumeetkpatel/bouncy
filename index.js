@@ -1,136 +1,120 @@
 var http = require('http');
-var ServerResponse = http.ServerResponse;
-var parsley = require('parsley');
-var BufferedStream = require('morestreams').BufferedStream;
+var https = require('https');
+var through = require('through');
+var parseArgs = require('./lib/parse_args.js');
+var insert = require('./lib/insert');
+var nextTick = typeof setImmediate !== 'undefined'
+    ? setImmediate
+    : process.nextTick
+;
 
-var insertHeaders = require('./lib/insert_headers');
-var updatePath = require('./lib/update_path');
-var parseArgs = require('./lib/parse_args');
-
-var net = require('net');
-var tls = require('tls');
-
-var bouncy = module.exports = function (opts, cb) {
+module.exports = function (opts, cb) {
     if (typeof opts === 'function') {
         cb = opts;
         opts = {};
     }
+    if (!opts) opts = {};
+    if (typeof opts === 'object' && opts.listen) opts = { server: opts };
     
-    if (opts && opts.key && opts.cert) {
-        return tls.createServer(opts, handler.bind(null, cb));
-    }
-    else {
-        return net.createServer(handler.bind(null, cb));
-    }
-};
-
-var handler = bouncy.handler = function (cb, c) {
-    var parser = parsley(c, function (req) {
-        c.setMaxListeners(0);
+    var ssl = Boolean(opts.key || opts.pfx);
+    var connectionEvent = ssl ? 'secureConnection' : 'connection';
+    
+    var server = opts.server || (ssl
+        ? https.createServer(opts)
+        : http.createServer()
+    );
+    server.on(connectionEvent, function (stream) {
+        var src = stream._bouncyStream = stealthBuffer();
         
-        var stream = new BufferedStream;
-        stream.pause();
-        
-        function onData (buf) {
-            stream.write(buf);
+        // hack to work around a node 0.10 bug:
+        // https://github.com/joyent/node/commit/e11668b244ee62d9997d4871f368075b8abf8d45
+        if (/^v0\.10\.\d+$/.test(process.version)) {
+            var ondata = stream.ondata;
+            var onend = stream.onend;
+            
+            //first data event, fires once time
+            stream.ondata = function (buf, i, j) {
+                var res = ondata(buf, i, j);
+                src.write(buf.slice(i, j));
+                return res;
+            };
+            //second data event, fires other times
+            stream.on('data',function(buf){
+                src.write(buf);
+            });
+            
+            //does not fires with websocket connection
+            stream.onend = function () {
+                var res = onend();
+                src.end();
+                return res;
+            };
+            
+            //fires when websocket connection ends
+            stream.on('end',function(){
+                src.end();
+            });
         }
-        
-        req.socket.on('close', function() {
-           stream.end(); 
-        });
-
-        req.on('rawHead', onData);
-        req.on('rawBody', onData);
-        
-        req.on('rawEnd', function () {
-            req.removeListener('rawHead', onData);
-            req.removeListener('rawBody', onData);
-        });
-        
-        function onHeaders () {
-            req.removeListener('error', onError);
-            // don't kill the server on subsequent request errors
-            req.on('error', function () {});
-            var bounce = makeBounce(stream, c, req, parser);
-            cb(req, bounce);
-        }
-        req.on('headers', onHeaders);
-        
-        function onError (err) {
-            req.removeListener('headers', onHeaders);
-            var bounce = makeBounce(stream, c, req, parser);
-            cb(req, bounce);
-            req.emit('error', err);
-        }
-        req.once('error', onError);
+        else stream.pipe(src);
     });
+    
+    server.on('upgrade', onrequest);
+    server.on('request', onrequest);
+    return server;
+    
+    function onrequest (req, res) {
+        var src = req.connection._bouncyStream;
+        if (src._handled) return;
+        src._handled = true;
+        
+        var bounce = function (dst) {
+            var args = {};
+            if (!dst || typeof dst.pipe !== 'function') {
+                args = parseArgs(arguments);
+                dst = args.stream;
+            }
+            if (!dst) dst = through();
+            
+            function destroy () {
+                src.destroy();
+                dst.destroy();
+            }
+            src.on('error', destroy);
+            dst.on('error', destroy);
+            
+            var s = args.headers || args.method || args.path
+                ? src.pipe(insert(args))
+                : src
+            ;
+            s.pipe(dst).pipe(req.connection);
+            
+            nextTick(function () { src._resume() });
+            return dst;
+        };
+        
+        if (cb.length === 2) cb(req, bounce)
+        else cb(req, res, bounce)
+    }
 };
 
-function makeBounce (bs, client, req, parser) {
-    var bounce = function (stream, opts) {
-        if (!stream || !stream.write) {
-            opts = parseArgs(arguments);
-            stream = opts.stream;
-        }
-        if (!opts) opts = {};
-        
-        if (!opts.headers) opts.headers = {};
-        if (!('x-forwarded-for' in opts.headers)) {
-            opts.headers['x-forwarded-for'] = client.remoteAddress;
-        }
-        if (!('x-forwarded-port' in opts.headers)) {
-            var m = (req.headers.host || '').match(/:(\d+)/);
-            opts.headers['x-forwarded-port'] = m && m[1] || 80;
-        }
-        if (!('x-forwarded-proto' in opts.headers)) {
-            opts.headers['x-forwarded-proto'] =
-                client.encrypted ? 'https' : 'http';
-        }
-        
-        insertHeaders(bs.chunks, opts.headers);
-        if (opts.path) updatePath(bs.chunks, opts.path);
-        
-        if (stream.writable && client.writable) {
-            bs.pipe(stream);
-            stream.pipe(client);
-        }
-        else if (opts.emitter) {
-            opts.emitter.emit('drop', client);
-        }
-        
-        stream.on('error', function (err) {
-            if (stream.listeners('error').length === 1) {
-                // destroy the request and stream if nobody is listening
-                req.destroy();
-                stream.destroy();
-            }
-        });
-
-        client.on('error', function (err) {
-            req.destroy();
-            stream.destroy();
-        });
-        
-        return stream;
+function stealthBuffer () {
+    // the raw_ok test doesn't pass without this shim
+    // instead of just using through() and then immediately calling .pause()
+    
+    var tr = through(write, end);
+    var buffer = [];
+    tr._resume = function () {
+        buffer.forEach(tr.queue.bind(tr));
+        buffer = undefined;
     };
+    return tr;
     
-    bounce.stream = bs;
-    bounce.parser = parser;
-    bounce.upgrade = parser.upgrade.bind(parser);
-    
-    bounce.reset = function () {
-        bs.chunks = [];
-    };
-    
-    bounce.respond = function () {
-        var res = new ServerResponse(req);
-        res.assignSocket(client);
-        res.on('finish', function () {
-            res.detachSocket(client);
-            client.destroySoon();
-        });
-        return res;
-    };
-    
-    return bounce;
+    function write (buf) {
+        if (buffer) buffer.push(buf)
+        else this.queue(buf)
+    }
+    function end () {
+        if (buffer) buffer.push(null)
+        else this.queue(null)
+    }
 }

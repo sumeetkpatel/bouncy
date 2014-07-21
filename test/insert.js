@@ -1,8 +1,9 @@
 var test = require('tap').test;
-var insertHeaders = require('../lib/insert_headers');
+var insert = require('../lib/insert');
+var chunky = require('chunky');
 
-test('insert headers', function (t) {
-    t.plan(50 * 3);
+test('insert headers CRLF', function (t) {
+    t.plan(2 * 50);
     var msg = [
         'POST / HTTP/1.1',
         'Host: beep',
@@ -11,33 +12,60 @@ test('insert headers', function (t) {
     ].join('\r\n');
     
     for (var i = 0; i < 50; i++) {
-        var bufs = splitUp(msg);
+        var bufs = chunky(msg);
         t.equal(bufs.map(String).join(''), msg);
         
-        var bufs_ = bufs.slice();
+        var s = insert({ headers: { foo : 'bar', baz : 'quux' } });
+        var data = '';
+        s.on('data', function (buf) { data += buf });
+        s.on('end', function () {
+            t.equal(data, [
+                'POST / HTTP/1.1',
+                'Host: beep',
+                'foo: bar',
+                'baz: quux',
+                '',
+                'sound=boop'
+            ].join('\r\n'));
+        });
         
-        var n = insertHeaders(bufs, { foo : 'bar', baz : 'quux' });
-        t.equal(n, 'foo: bar\r\nbaz: quux\r\n'.length);
-        t.ok(
-            bufs.length === bufs_.length + 2
-            || bufs.length === bufs_.length + 3
-        );
+        for (var j = 0; j < bufs.length; j++) {
+            s.write(bufs[j]);
+        }
+        s.end();
     }
-    t.end();
 });
 
-function splitUp (msg) {
-    var bufs = [];
-    for (
-        var i = 0, j = Math.floor(Math.random() * (msg.length + 1));
-        j <= msg.length;
-        j += Math.floor(Math.random() * (msg.length - j + 1))
-    ) {
-        var s = msg.slice(i, j);
-        bufs.push(new Buffer(s));
-        i = j;
-        if (j === msg.length) break;
-    }
+test('insert headers LF', function (t) {
+    t.plan(2 * 50);
+    var msg = [
+        'POST / HTTP/1.1',
+        'Host: beep',
+        '',
+        'sound=boop'
+    ].join('\n');
     
-    return bufs;
-}
+    for (var i = 0; i < 50; i++) {
+        var bufs = chunky(msg);
+        t.equal(bufs.map(String).join(''), msg);
+        
+        var s = insert({ headers: { foo : 'bar', baz : 'quux' } });
+        var data = '';
+        s.on('data', function (buf) { data += buf });
+        s.on('end', function () {
+            t.equal(data, [
+                'POST / HTTP/1.1',
+                'Host: beep',
+                'foo: bar',
+                'baz: quux',
+                '',
+                'sound=boop'
+            ].join('\n'));
+        });
+        
+        for (var j = 0; j < bufs.length; j++) {
+            s.write(bufs[j]);
+        }
+        s.end();
+    }
+});

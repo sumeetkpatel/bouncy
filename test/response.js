@@ -5,20 +5,18 @@ var bouncy = require('../');
 test('response', function (t) {
     t.plan(4);
     
-    var port = Math.floor(Math.random() * 5e4 + 1e4);
-    var server = bouncy(function (req, bounce) {
+    var server = bouncy(function (req, res, bounce) {
         t.equal(req.url, '/beep');
         
-        var res = bounce.respond();
         res.setHeader('content-type', 'text/plain');
         res.end('beep boop');
     });
     
-    server.listen(port, function () {
+    server.listen(function () {
         var opts = {
             method : 'GET',
             host : 'localhost',
-            port : port,
+            port : server.address().port,
             path : '/beep'
         };
         var req = http.request(opts, function (res) {

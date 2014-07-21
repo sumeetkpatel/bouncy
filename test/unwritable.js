@@ -4,7 +4,6 @@ var http = require('http');
 var Stream = require('net').Stream;
 
 test('write() on an unwritable stream', function (t) {
-    var port = Math.floor(Math.random() * (Math.pow(2,16) - 1e4) + 1e4);
     t.plan(1);
     var s = bouncy(function (req, bounce) {
         var stream = new Stream;
@@ -27,13 +26,17 @@ test('write() on an unwritable stream', function (t) {
             '',
             'oh hello'
         ].join('\r\n'));
+        
+        setTimeout(function () {
+            stream.destroy();
+        }, 200);
     });
     
-    s.listen(port, function () {
+    s.listen(function () {
         var opts = {
             method : 'POST',
             host : 'localhost',
-            port : port,
+            port : s.address().port,
             path : '/'
         };
         var req = http.request(opts);

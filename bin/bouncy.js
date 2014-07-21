@@ -1,17 +1,22 @@
 #!/usr/bin/env node
-var configFile = process.argv[2];
-var port = parseInt(process.argv[3], 10);
+var argv = require('optimist').argv;
+var configFile = argv.config || argv._.shift();
+var port = parseInt(argv.port || argv._.shift(), 10);
+var address = argv.address || argv._.shift() || '0.0.0.0';
+var fs = require('fs');
 
 if (!configFile || !port) {
-    console.error('Usage: bouncy [routes.json] [port]');
-    process.exit(1);
+    fs.createReadStream(__dirname + '/usage.txt')
+        .pipe(process.stdout)
+        .on('end', process.exit.bind(null, 1))
+    ;
+    return;
 }
 
-var fs = require('fs');
 var config = JSON.parse(fs.readFileSync(configFile));
 
-var bouncy = require('bouncy');
-bouncy(function (req, bounce) {
+var bouncy = require('../');
+var server = bouncy(function (req, res, bounce) {
     var host = (req.headers.host || '').replace(/:\d+$/, '');
     var route = config[host] || config[''];
     
@@ -22,27 +27,26 @@ bouncy(function (req, bounce) {
     
     req.on('error', onerror);
     function onerror (err) {
-        var res = bounce.respond();
         res.statusCode = 500;
-        res.end('error\r\n');
+        res.setHeader('content-type', 'text/plain');
+        res.end(String(err) + '\r\n');
     }
     
     if (typeof route === 'string') {
         var s = route.split(':');
-        if (s[1]) {
-            bounce(s[0], s[1]).on('error', onerror);
-        }
-        else {
-            bounce(s).on('error', onerror);
-        }
+        var b = s[1]
+            ? bounce(s[0], s[1])
+            : bounce(s)
+        ;
+        b.on('error', onerror);
     }
     else if (route) {
         bounce(route).on('error', onerror);
     }
     else {
-        var res = bounce.respond();
         res.statusCode = 404;
-        res.write('no such host');
+        res.setHeader('content-type', 'text/plain');
+        res.write('host not found\r\n');
         res.end();
     }
-}).listen(port);
+}).listen(port, address);
