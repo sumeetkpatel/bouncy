@@ -87,8 +87,12 @@ module.exports = function (opts, cb) {
                 : src
             ;
             s.pipe(dst).pipe(req.connection);
-            
+
             nextTick(function () { src._resume() });
+
+            dst.rawResponse = res;
+            dst.rawRequest = req;
+            
             return dst;
         };
         
@@ -104,7 +108,8 @@ function stealthBuffer () {
     var tr = through(write, end);
     var buffer = [];
     tr._resume = function () {
-        buffer.forEach(tr.queue.bind(tr));
+        if (buffer)
+            buffer.forEach(tr.queue.bind(tr));
         buffer = undefined;
     };
     return tr;
